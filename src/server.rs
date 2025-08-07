@@ -2,9 +2,8 @@ use askama::Template;
 use serde::Serialize;
 use std::sync::Arc;
 use warp::Filter;
-use chrono::{DateTime, Utc};
 
-#[derive(Serialize)]
+#[derive(Serialize, Clone)]
 pub struct DisplayTransfer {
     pub date: String,
     pub amount: String,
@@ -20,7 +19,7 @@ struct IndexTemplate {
     transfers: Vec<DisplayTransfer>,
 }
 
-pub async fn start_server(transfers: Vec<super::indexer::UsdcTransfer>) -> anyhow::Result<()> {
+pub async fn start_server(transfers: Vec<crate::indexer::UsdcTransfer>) -> anyhow::Result<()> {
     let transfers = Arc::new(transfers);
 
     // Convert to display-friendly format
@@ -38,7 +37,7 @@ pub async fn start_server(transfers: Vec<super::indexer::UsdcTransfer>) -> anyho
     let index = warp::path::end().map(move || {
         let template = IndexTemplate {
             wallet_address: "7cMEhpt9y3inBNVv8fNnuaEbx7hKHZnLvR1KWKKxuDDU".to_string(),
-            transfers: display_transfers.clone(),
+            transfers: display_transfers.to_vec(),
         };
         warp::reply::html(template.render().unwrap())
     });
