@@ -31,11 +31,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
 
     // Get all signatures for the wallet
     let signatures = client.get_signatures_for_address(
-        &walkey_pubkey,
-        Some(serde_json::json!({
-            "limit": 1000,
-            "before": current_slot,
-        })),
+        &wallet_pubkey,
     )?;
 
     let mut transfers = Vec::new();
@@ -51,34 +47,35 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            if let Some(pre_token_balances) = meta.pre_token_balances {
-                if let Some(post_token_balances) = meta.post_token_balances {
-                    for (pre, post) in pre_token_balances.iter().zip(post_token_balances.iter()) {
-                        if pre.mint == USDC_MINT || post.mint == USDC_MINT {
-                            let pre_owner = &pre.owner;
-                            let post_owner = &post.owner;
-                            let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
-                            let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+            let pre_token_balances = meta.pre_token_balances;
+            let post_token_balances = meta.post_token_balances;
 
-                            if pre_owner == wallet_address && post_owner != wallet_address {
-                                // USDC sent out
-                                transfers.push(UsdcTransfer {
-                                    date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
-                                    amount: pre_amount - post_amount,
-                                    direction: "out".to_string(),
-                                    transaction_id: sig.signature.clone(),
-                                    other_party: post_owner.clone(),
-                                });
-                            } else if pre_owner != wallet_address && post_owner == wallet_address {
-                                // USDC received
-                                transfers.push(UsdcTransfer {
-                                    date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
-                                    amount: post_amount - pre_amount,
-                                    direction: "in".to_string(),
-                                    transaction_id: sig.signature.clone(),
-                                    other_party: pre_owner.clone(),
-                                });
-                            }
+            for pre in pre_token_balances.iter().flatten() {
+                for post in post_token_balances.iter().flatten() {
+                    if pre.mint == USDC_MINT || post.mint == USDC_MINT {
+                        let pre_owner = &pre.owner;
+                        let post_owner = &post.owner;
+                        let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
+                        let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+
+                        if pre_owner == wallet_address && post_owner != wallet_address {
+                            // USDC sent out
+                            transfers.push(UsdcTransfer {
+                                date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                                amount: pre_amount - post_amount,
+                                direction: "out".to_string(),
+                                transaction_id: sig.signature.clone(),
+                                other_party: post_owner.clone(),
+                            });
+                        } else if pre_owner != wallet_address && post_owner == wallet_address {
+                            // USDC received
+                            transfers.push(UsdcTransfer {
+                                date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                                amount: post_amount - pre_amount,
+                                direction: "in".to_string(),
+                                transaction_id: sig.signature.clone(),
+                                other_party: pre_owner.clone(),
+                            });
                         }
                     }
                 }
