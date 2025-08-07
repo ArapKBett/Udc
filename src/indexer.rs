@@ -1,9 +1,8 @@
-
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use solana_sdk::signature::Signature;
-use solana_transaction_status::{UiTransactionEncoding, option_serializer::OptionSerializer};
+use solana_transaction_status::{UiTransactionEncoding, UiTransactionTokenBalance, option_serializer::OptionSerializer};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc, TimeZone};
 use std::str::FromStr;
@@ -28,8 +27,11 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
 
     // Get current slot to calculate time range
     let current_slot = client.get_slot()?;
-    let slot_time = client.get_block_time(current_slot)?
-        .ok_or_else(|| anyhow::anyhow!("Failed to get current slot time"))?;
+
+    // `get_block_time` returns Result<Option<i64>>
+    let slot_time_opt = client.get_block_time(current_slot)?;
+    let slot_time = slot_time_opt.ok_or_else(|| anyhow!("Failed to get current slot time"))?;
+
     let one_day_ago = slot_time - 86400; // 24 hours in seconds
 
     // Get all signatures for the wallet
@@ -43,20 +45,23 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
             _ => continue, // skip if no block time or too old
         };
 
+        // Convert signature string to `Signature` type
         let signature = Signature::from_str(&sig_info.signature)?;
 
         let transaction = client.get_transaction(&signature, UiTransactionEncoding::Json)?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Extract pre and post token balances safely from OptionSerializer
+            // Provide empty vector references to fix match arm type mismatches
+            let empty_vec: &Vec<UiTransactionTokenBalance> = &vec![];
+
             let pre_balances = match &meta.pre_token_balances {
                 OptionSerializer::Some(vec) => vec,
-                _ => &[],
+                _ => empty_vec,
             };
 
             let post_balances = match &meta.post_token_balances {
                 OptionSerializer::Some(vec) => vec,
-                _ => &[],
+                _ => empty_vec,
             };
 
             for pre in pre_balances {
@@ -69,7 +74,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                         continue;
                     }
 
-                    // Extract owners safely (owners are also wrapped in OptionSerializer)
+                    // Extract owners safely wrapped in OptionSerializer
                     let pre_owner = match &pre.owner {
                         OptionSerializer::Some(owner) => owner,
                         _ => "",
@@ -83,9 +88,10 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                     let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
                     let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
 
-                    // Convert block_time (i64) to DateTime<Utc> using the recommended API
-                    let dt = Utc.timestamp_opt(block_time, 0).single()
-                        .ok_or_else(|| anyhow::anyhow!("Invalid timestamp"))?;
+                    // Create DateTime<Utc> from unix timestamp (seconds)
+                    let dt = Utc.timestamp_opt(block_time, 0)
+                        .single()
+                        .ok_or_else(|| anyhow!("Invalid timestamp"))?;
 
                     if pre_owner == wallet_address && post_owner != wallet_address {
                         // USDC sent out
