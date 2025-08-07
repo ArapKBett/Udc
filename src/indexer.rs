@@ -22,7 +22,6 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
     let client = RpcClient::new_with_commitment(rpc_url.to_string(), CommitmentConfig::confirmed());
 
     let wallet_pubkey = Pubkey::from_str(wallet_address)?;
-    let usdc_mint_pubkey = Pubkey::from_str(USDC_MINT)?;
 
     // Get current slot to calculate time range
     let current_slot = client.get_slot()?;
@@ -40,51 +39,49 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
         }
 
         let transaction = client.get_transaction(
-            &sig.signature.parse()?,
+            &sig.signature,
             solana_transaction_status::UiTransactionEncoding::Json,
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Handle pre_token_balances
-            let pre_balances = match meta.pre_token_balances {
-                solana_transaction_status::OptionSerializer::Some(v) => v,
-                _ => vec![],
-            };
-
-            // Handle post_token_balances
-            let post_balances = match meta.post_token_balances {
-                solana_transaction_status::OptionSerializer::Some(v) => v,
-                _ => vec![],
-            };
+            // Extract token balances safely
+            let pre_balances = meta.pre_token_balances.unwrap_or_default();
+            let post_balances = meta.post_token_balances.unwrap_or_default();
 
             // Find matching USDC transfers
             for pre in &pre_balances {
-                for post in &post_balances {
-                    if pre.mint == USDC_MINT || post.mint == USDC_MINT {
-                        let pre_owner = &pre.owner;
-                        let post_owner = &post.owner;
-                        let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
-                        let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+                if pre.mint != USDC_MINT {
+                    continue;
+                }
 
-                        if pre_owner == wallet_address && post_owner != wallet_address {
-                            // USDC sent out
-                            transfers.push(UsdcTransfer {
-                                date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
-                                amount: pre_amount - post_amount,
-                                direction: "out".to_string(),
-                                transaction_id: sig.signature.clone(),
-                                other_party: post_owner.clone(),
-                            });
-                        } else if pre_owner != wallet_address && post_owner == wallet_address {
-                            // USDC received
-                            transfers.push(UsdcTransfer {
-                                date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
-                                amount: post_amount - pre_amount,
-                                direction: "in".to_string(),
-                                transaction_id: sig.signature.clone(),
-                                other_party: pre_owner.clone(),
-                            });
-                        }
+                for post in &post_balances {
+                    if post.mint != USDC_MINT {
+                        continue;
+                    }
+
+                    let pre_owner = pre.owner.clone();
+                    let post_owner = post.owner.clone();
+                    let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
+                    let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
+
+                    if pre_owner == wallet_address && post_owner != wallet_address {
+                        // USDC sent out
+                        transfers.push(UsdcTransfer {
+                            date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                            amount: pre_amount - post_amount,
+                            direction: "out".to_string(),
+                            transaction_id: sig.signature.clone(),
+                            other_party: post_owner,
+                        });
+                    } else if pre_owner != wallet_address && post_owner == wallet_address {
+                        // USDC received
+                        transfers.push(UsdcTransfer {
+                            date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                            amount: post_amount - pre_amount,
+                            direction: "in".to_string(),
+                            transaction_id: sig.signature.clone(),
+                            other_party: pre_owner,
+                        });
                     }
                 }
             }
