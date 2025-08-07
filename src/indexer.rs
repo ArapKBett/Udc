@@ -45,13 +45,21 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Use the helper methods provided by the transaction status
-            let pre_balances = meta.pre_token_balances();
-            let post_balances = meta.post_token_balances();
+            // Handle pre_token_balances
+            let pre_balances = match meta.pre_token_balances {
+                solana_transaction_status::OptionSerializer::Some(v) => v,
+                _ => vec![],
+            };
+
+            // Handle post_token_balances
+            let post_balances = match meta.post_token_balances {
+                solana_transaction_status::OptionSerializer::Some(v) => v,
+                _ => vec![],
+            };
 
             // Find matching USDC transfers
-            for pre in pre_balances {
-                for post in post_balances {
+            for pre in &pre_balances {
+                for post in &post_balances {
                     if pre.mint == USDC_MINT || post.mint == USDC_MINT {
                         let pre_owner = &pre.owner;
                         let post_owner = &post.owner;
