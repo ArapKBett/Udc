@@ -1,9 +1,11 @@
+
 use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use solana_sdk::signature::Signature;
+use solana_transaction_status::{UiTransactionEncoding, option_serializer::OptionSerializer};
 use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc, NaiveDateTime};
+use chrono::{DateTime, Utc, TimeZone};
 use std::str::FromStr;
 
 // USDC Mint Address
@@ -26,7 +28,8 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
 
     // Get current slot to calculate time range
     let current_slot = client.get_slot()?;
-    let slot_time = client.get_block_time(current_slot)?;
+    let slot_time = client.get_block_time(current_slot)?
+        .ok_or_else(|| anyhow::anyhow!("Failed to get current slot time"))?;
     let one_day_ago = slot_time - 86400; // 24 hours in seconds
 
     // Get all signatures for the wallet
@@ -35,28 +38,27 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
     let mut transfers = Vec::new();
 
     for sig_info in signatures {
-        let block_time_opt = sig_info.block_time;
-        if block_time_opt.is_none() {
-            continue;
-        }
-        let block_time = block_time_opt.unwrap();
-        if block_time < one_day_ago {
-            continue;
-        }
+        let block_time = match sig_info.block_time {
+            Some(t) if t >= one_day_ago => t,
+            _ => continue, // skip if no block time or too old
+        };
 
         let signature = Signature::from_str(&sig_info.signature)?;
 
-        let transaction = client.get_transaction(
-            &signature,
-            solana_transaction_status::UiTransactionEncoding::Json,
-        )?;
+        let transaction = client.get_transaction(&signature, UiTransactionEncoding::Json)?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Use as_ref() to safely access OptionSerializer<Vec<_>>
-            let pre_balances = meta.pre_token_balances.as_ref().map(|v| &v[..]).unwrap_or(&[]);
-            let post_balances = meta.post_token_balances.as_ref().map(|v| &v[..]).unwrap_or(&[]);
+            // Extract pre and post token balances safely from OptionSerializer
+            let pre_balances = match &meta.pre_token_balances {
+                OptionSerializer::Some(vec) => vec,
+                _ => &[],
+            };
 
-            // Find matching USDC transfers
+            let post_balances = match &meta.post_token_balances {
+                OptionSerializer::Some(vec) => vec,
+                _ => &[],
+            };
+
             for pre in pre_balances {
                 if pre.mint != USDC_MINT {
                     continue;
@@ -67,16 +69,23 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                         continue;
                     }
 
-                    let pre_owner = pre.owner.clone();
-                    let post_owner = post.owner.clone();
+                    // Extract owners safely (owners are also wrapped in OptionSerializer)
+                    let pre_owner = match &pre.owner {
+                        OptionSerializer::Some(owner) => owner,
+                        _ => "",
+                    };
+
+                    let post_owner = match &post.owner {
+                        OptionSerializer::Some(owner) => owner,
+                        _ => "",
+                    };
+
                     let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
                     let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
 
-                    // Convert timestamp to DateTime<Utc>
-                    let dt = DateTime::<Utc>::from_utc(
-                        NaiveDateTime::from_timestamp(block_time, 0),
-                        Utc,
-                    );
+                    // Convert block_time (i64) to DateTime<Utc> using the recommended API
+                    let dt = Utc.timestamp_opt(block_time, 0).single()
+                        .ok_or_else(|| anyhow::anyhow!("Invalid timestamp"))?;
 
                     if pre_owner == wallet_address && post_owner != wallet_address {
                         // USDC sent out
@@ -85,7 +94,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                             amount: pre_amount - post_amount,
                             direction: "out".to_string(),
                             transaction_id: sig_info.signature.clone(),
-                            other_party: post_owner,
+                            other_party: post_owner.to_string(),
                         });
                     } else if pre_owner != wallet_address && post_owner == wallet_address {
                         // USDC received
@@ -94,7 +103,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                             amount: post_amount - pre_amount,
                             direction: "in".to_string(),
                             transaction_id: sig_info.signature.clone(),
-                            other_party: pre_owner,
+                            other_party: pre_owner.to_string(),
                         });
                     }
                 }
