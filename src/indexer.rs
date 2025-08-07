@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use serde::{Serialize, Deserialize};
@@ -31,7 +31,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
 
     // Get all signatures for the wallet
     let signatures = client.get_signatures_for_address(
-        &wallet_pubkey,
+        &walkey_pubkey,
         Some(serde_json::json!({
             "limit": 1000,
             "before": current_slot,
@@ -50,7 +50,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
             solana_transaction_status::UiTransactionEncoding::Json,
         )?;
 
-        if let Some(meta) = transaction.meta {
+        if let Some(meta) = transaction.transaction.meta {
             if let Some(pre_token_balances) = meta.pre_token_balances {
                 if let Some(post_token_balances) = meta.post_token_balances {
                     for (pre, post) in pre_token_balances.iter().zip(post_token_balances.iter()) {
@@ -87,4 +87,4 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
     }
 
     Ok(transfers)
-          }
+}
