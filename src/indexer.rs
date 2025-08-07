@@ -4,7 +4,6 @@ use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
-use solana_transaction_status::OptionSerializer;
 
 // USDC Mint Address
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -46,23 +45,13 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Handle pre_token_balances
-            let pre_balances = match meta.pre_token_balances {
-                OptionSerializer::Some(balances) => balances,
-                OptionSerializer::None => Vec::new(),
-                OptionSerializer::Skip => Vec::new(),
-            };
-
-            // Handle post_token_balances
-            let post_balances = match meta.post_token_balances {
-                OptionSerializer::Some(balances) => balances,
-                OptionSerializer::None => Vec::new(),
-                OptionSerializer::Skip => Vec::new(),
-            };
+            // Use the helper methods provided by the transaction status
+            let pre_balances = meta.pre_token_balances();
+            let post_balances = meta.post_token_balances();
 
             // Find matching USDC transfers
-            for pre in &pre_balances {
-                for post in &post_balances {
+            for pre in pre_balances {
+                for post in post_balances {
                     if pre.mint == USDC_MINT || post.mint == USDC_MINT {
                         let pre_owner = &pre.owner;
                         let post_owner = &post.owner;
