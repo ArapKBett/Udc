@@ -4,6 +4,7 @@ use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
 use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
 use std::str::FromStr;
+use solana_transaction_status::OptionSerializer;
 
 // USDC Mint Address
 const USDC_MINT: &str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
@@ -30,9 +31,7 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
     let one_day_ago = slot_time - 86400; // 24 hours in seconds
 
     // Get all signatures for the wallet
-    let signatures = client.get_signatures_for_address(
-        &wallet_pubkey,
-    )?;
+    let signatures = client.get_signatures_for_address(&wallet_pubkey)?;
 
     let mut transfers = Vec::new();
 
@@ -47,11 +46,23 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            let pre_token_balances = meta.pre_token_balances;
-            let post_token_balances = meta.post_token_balances;
+            // Handle pre_token_balances
+            let pre_balances = match meta.pre_token_balances {
+                OptionSerializer::Some(balances) => balances,
+                OptionSerializer::None => Vec::new(),
+                OptionSerializer::Skip => Vec::new(),
+            };
 
-            for pre in pre_token_balances.iter().flatten() {
-                for post in post_token_balances.iter().flatten() {
+            // Handle post_token_balances
+            let post_balances = match meta.post_token_balances {
+                OptionSerializer::Some(balances) => balances,
+                OptionSerializer::None => Vec::new(),
+                OptionSerializer::Skip => Vec::new(),
+            };
+
+            // Find matching USDC transfers
+            for pre in &pre_balances {
+                for post in &post_balances {
                     if pre.mint == USDC_MINT || post.mint == USDC_MINT {
                         let pre_owner = &pre.owner;
                         let post_owner = &post.owner;
