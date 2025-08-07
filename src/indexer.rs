@@ -1,8 +1,9 @@
 use anyhow::Result;
 use solana_client::rpc_client::RpcClient;
 use solana_sdk::{commitment_config::CommitmentConfig, pubkey::Pubkey};
+use solana_sdk::signature::Signature;
 use serde::{Serialize, Deserialize};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, NaiveDateTime};
 use std::str::FromStr;
 
 // USDC Mint Address
@@ -33,28 +34,35 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
 
     let mut transfers = Vec::new();
 
-    for sig in signatures {
-        if sig.block_time.is_none() || sig.block_time.unwrap() < one_day_ago {
+    for sig_info in signatures {
+        let block_time_opt = sig_info.block_time;
+        if block_time_opt.is_none() {
+            continue;
+        }
+        let block_time = block_time_opt.unwrap();
+        if block_time < one_day_ago {
             continue;
         }
 
+        let signature = Signature::from_str(&sig_info.signature)?;
+
         let transaction = client.get_transaction(
-            &sig.signature,
+            &signature,
             solana_transaction_status::UiTransactionEncoding::Json,
         )?;
 
         if let Some(meta) = transaction.transaction.meta {
-            // Extract token balances safely
-            let pre_balances = meta.pre_token_balances.unwrap_or_default();
-            let post_balances = meta.post_token_balances.unwrap_or_default();
+            // Use as_ref() to safely access OptionSerializer<Vec<_>>
+            let pre_balances = meta.pre_token_balances.as_ref().map(|v| &v[..]).unwrap_or(&[]);
+            let post_balances = meta.post_token_balances.as_ref().map(|v| &v[..]).unwrap_or(&[]);
 
             // Find matching USDC transfers
-            for pre in &pre_balances {
+            for pre in pre_balances {
                 if pre.mint != USDC_MINT {
                     continue;
                 }
 
-                for post in &post_balances {
+                for post in post_balances {
                     if post.mint != USDC_MINT {
                         continue;
                     }
@@ -64,22 +72,28 @@ pub async fn get_usdc_transfers(wallet_address: &str) -> Result<Vec<UsdcTransfer
                     let pre_amount = pre.ui_token_amount.ui_amount.unwrap_or(0.0);
                     let post_amount = post.ui_token_amount.ui_amount.unwrap_or(0.0);
 
+                    // Convert timestamp to DateTime<Utc>
+                    let dt = DateTime::<Utc>::from_utc(
+                        NaiveDateTime::from_timestamp(block_time, 0),
+                        Utc,
+                    );
+
                     if pre_owner == wallet_address && post_owner != wallet_address {
                         // USDC sent out
                         transfers.push(UsdcTransfer {
-                            date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                            date: dt,
                             amount: pre_amount - post_amount,
                             direction: "out".to_string(),
-                            transaction_id: sig.signature.clone(),
+                            transaction_id: sig_info.signature.clone(),
                             other_party: post_owner,
                         });
                     } else if pre_owner != wallet_address && post_owner == wallet_address {
                         // USDC received
                         transfers.push(UsdcTransfer {
-                            date: DateTime::from_timestamp(sig.block_time.unwrap(), 0).unwrap(),
+                            date: dt,
                             amount: post_amount - pre_amount,
                             direction: "in".to_string(),
-                            transaction_id: sig.signature.clone(),
+                            transaction_id: sig_info.signature.clone(),
                             other_party: pre_owner,
                         });
                     }
